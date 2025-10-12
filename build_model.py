@@ -2,7 +2,7 @@ from utils import log_model_source, save_macs_params_count
 
 import torch
 from timm.models.vision_transformer import VisionTransformer
-
+from embedding import Embeddings
 
 def build_model(args):
     if args.model == "vit":
@@ -21,6 +21,10 @@ def build_model(args):
             attn_drop_rate=0.0,
             drop_path_rate=(0.1 if args.deit_scheme else 0.0),       
         )
+
+    # Swapping the default patch embedding with our custom one
+    model.patch_embed = Embeddings(img_size=args.image_size, patch_size=args.patch_size, embed_dim=args.embed_dim)
+    model.pos_embed = None # Disables the positional embeddings in the timm model
 
     print(f"\nNumber of model parameters: {sum(p.numel() for p in model.parameters())}\n")
 
