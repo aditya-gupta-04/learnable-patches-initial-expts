@@ -22,9 +22,13 @@ def build_model(args):
             drop_path_rate=(0.1 if args.deit_scheme else 0.0),       
         )
 
-    # Swapping the default patch embedding with our custom one
-    model.patch_embed = Embeddings(img_size=args.image_size, patch_size=args.patch_size, embed_dim=args.embed_dim)
-    model.pos_embed = None # Disables the positional embeddings in the timm model
+    if args.learn_patch_boundaries:
+        # Swapping the default patch embedding with our custom one
+        model.patch_embed = Embeddings(img_size=args.image_size, patch_size=args.patch_size, embed_dim=args.embed_dim, ratio_loss_N=args.ratio_loss_N)
+        model.pos_embed = None # Disables the positional embeddings in the timm model
+
+        print("Initialized model with learnable patch boundaries, swapped original patch_embed and disabled original pos_embed")
+        print(f"Ratio Loss N : {"No Ratio Loss" if args.ratio_loss_N == 0 else args.ratio_loss_N} | Ratio Loss weighted by alpha = {args.ratio_loss_alpha}")
 
     print(f"\nNumber of model parameters: {sum(p.numel() for p in model.parameters())}\n")
 

@@ -2,6 +2,10 @@ from timm.layers import PatchEmbed
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import cv2
+import numpy as np
+import os
 
 class RoutingModule(nn.Module):
 
@@ -106,7 +110,7 @@ class ChunkLayer(nn.Module):
 
 class Embeddings(nn.Module):
 
-    def __init__(self, img_size, patch_size, embed_dim):
+    def __init__(self, img_size, patch_size, embed_dim, ratio_loss_N):
         super().__init__()
 
         self.embed_dim = embed_dim
@@ -116,12 +120,12 @@ class Embeddings(nn.Module):
         self.chunk_layer = ChunkLayer()
         
         self.ratio_loss_cache = None
-        self.downsampling_factor = 3
+        self.downsampling_factor = ratio_loss_N
 
         self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
         # Create position embeddings for the [CLS] token and the patch embeddings
         # Add 1 to the sequence length for the [CLS] token
-        # self.position_embeddings = nn.Parameter(torch.randn(1, self.patch_embeddings.num_patches + 1, embed_dim))
+        self.position_embeddings = nn.Parameter(torch.randn(1, self.patch_embeddings.num_patches, embed_dim))
 
     def _packed_to_batches(self, x, cu_seqlens, max_len, pad_value=0.0):
         B = cu_seqlens.numel() - 1
@@ -170,6 +174,7 @@ class Embeddings(nn.Module):
     
     def forward(self, x):
         x = self.patch_embeddings(x)
+        x = x + self.position_embeddings
 
         batch_size, _, _ = x.size()
         
@@ -196,3 +201,68 @@ class Embeddings(nn.Module):
         # x = x + self.position_embeddings
         # return x, boundary_mask.reshape(batch_size, self.patch_embeddings.grid_size[0], self.patch_embeddings.grid_size[1])
         return x
+
+
+def visualize_patch_boundaries(imgs, is_correct_tensor, patches, epoch, expt_name):
+
+    num_imgs = imgs.shape[0]
+
+    plt.figure(figsize=(20, 8))
+    for i in range(num_imgs):
+        plt.subplot(2, num_imgs, i+1)
+        mean = torch.tensor([0.4914, 0.4822, 0.4465]).view(3,1,1)
+        std  = torch.tensor([0.2023, 0.1994, 0.2010]).view(3,1,1)
+        img = (imgs[i].detach().cpu() * std + mean).permute(1, 2, 0).numpy()
+        plt.title(f"Is correct : {is_correct_tensor[i].detach().cpu().numpy()}")
+        plt.imshow(img)
+
+        plt.subplot(2, num_imgs, i + num_imgs + 1)
+        patches_np = patches[i].detach().cpu().numpy()
+        plt.title(f"Active patches : {patches_np.sum()}")
+        plt.imshow(img * cv2.resize(patches_np.astype(int), img.shape[:2], interpolation=cv2.INTER_NEAREST)[..., None], cmap='gray')
+
+    if not os.path.exists(f"expt_logs/{expt_name}/patches_viz"):
+        os.makedirs(f"expt_logs/{expt_name}/patches_viz")
+
+    plt.savefig(f"expt_logs/{expt_name}/patches_viz/viz_epoch_{epoch}.png")
+    plt.close()
+
+
+def routing_module_statistics(loader, model, device, epoch, expt_name):
+
+    token_counts = []
+    is_correct = []
+
+    with torch.no_grad():
+        for batch_idx, (inputs, targets) in enumerate(loader):
+
+            inputs, targets = inputs.to(device), targets.to(device)
+            _, mask = model.patch_embed.get_patch_boundaries(inputs)
+
+            token_counts.extend(mask.reshape(mask.shape[0], -1).sum(1).detach().cpu().numpy().tolist())
+
+            outputs = model(inputs)
+            _, predicted = outputs.max(1)
+            is_correct.extend(predicted.eq(targets).detach().cpu().numpy().tolist())
+
+    token_counts = np.array(token_counts)
+    is_correct = np.array(is_correct)
+
+
+    plt.figure(figsize=(12,5))
+    plt.subplot(1, 2, 1)
+    plt.title("# of tokens retained by routing module")
+    plt.hist(token_counts)
+
+    plt.subplot(1, 2, 2)
+    plt.title("# of tokens retained by routing module by pred")
+    plt.hist(token_counts[is_correct], bins=30, alpha=0.6, label='mask = True', color='C0')
+    plt.hist(token_counts[~is_correct], bins=30, alpha=0.6, label='mask = False', color='C1')
+    plt.legend()
+
+    if not os.path.exists(f"expt_logs/{expt_name}/stats"):
+        os.makedirs(f"expt_logs/{expt_name}/stats")
+
+    plt.savefig(f"expt_logs/{expt_name}/stats/num_tokens_stats_{epoch}.png")
+    plt.close()
+

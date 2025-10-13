@@ -22,6 +22,7 @@ import time
 import numpy as np
 import pandas as pd
 from timm.loss import SoftTargetCrossEntropy
+from embedding import visualize_patch_boundaries, routing_module_statistics
 
 
 parser = argparse.ArgumentParser(description="PyTorch ViT Training")
@@ -77,6 +78,12 @@ parser.add_argument(
     type=bool,
     help="whether to use mixed precision training or not",
 )
+
+# For new embeddings
+parser.add_argument("--learn_patch_boundaries", action="store_true")
+parser.add_argument("--ratio_loss_alpha", default=0.03, type=float, help="Loss scaling for ratio loss")
+parser.add_argument("--ratio_loss_N", default=0, type=float, help="Ratio Loss N")
+
 
 args = parser.parse_args()
 args.image_size = eval(args.image_size)
@@ -157,7 +164,12 @@ def train(epoch, logs):
             inputs, targets = mixup_fn(inputs, targets)
 
         outputs = model(inputs)
-        loss = criterion(outputs, targets)
+        loss = criterion(outputs, targets) 
+
+        if args.learn_patch_boundaries and args.ratio_loss_N != 0:
+            loss += args.ratio_loss_alpha * model.patch_embed.ratio_loss_cache
+            # Clear to avoid keeping references to the whole graph
+            model.patch_embed.ratio_loss_cache = None
 
         if args.amp:
             # standard pytorch AMP training setup
@@ -258,9 +270,25 @@ def test(epoch, logs):
         logs[-1]["test_peak_reserved_mem"] = peak_reserved
         logs[-1]["test_mean_batch_time"] = np.mean(batch_times)
 
+        if args.learn_patch_boundaries:
+            NUM_IMGS_FOR_VIZ = 8
+            indices = torch.randint(0, len(testloader.dataset), (NUM_IMGS_FOR_VIZ,))
+            samples = [testloader.dataset[i] for i in indices]
+            inputs, labels = zip(*samples)
+            inputs = torch.stack(inputs)
+            labels = torch.tensor(labels)
+            inputs, labels = inputs.to(device), labels.to(device)
+
+            with torch.no_grad():
+                outputs = model(inputs)
+                _, predicted = outputs.max(1)
+                is_correct_tensor = predicted.eq(labels)
+
+            imgs, patches = model.patch_embed.get_patch_boundaries(inputs)
+            visualize_patch_boundaries(imgs, is_correct_tensor, patches, epoch, args.expt_name)
+            routing_module_statistics(testloader, model, device, epoch, args.expt_name)
+            
         return 100.0 * correct / total, test_loss / (batch_idx + 1)
-
-
 
 
 seed = 0
@@ -293,6 +321,21 @@ for epoch in range(args.epochs):
     # Add logging/plot code if needed
     logs_df = pd.DataFrame(logs)
     logs_df.to_csv(f"./expt_logs/{args.expt_name}/{args.expt_name}_logs.csv")
+
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(12,5))
+    plt.subplot(1,2,1)
+    plt.title("Losses")
+    plt.plot(logs_df["epoch"], logs_df["train_loss"], label="Train Loss")
+    plt.plot(logs_df["epoch"], logs_df["test_loss"], label="Test Loss")
+    plt.legend()
+    
+    plt.subplot(1,2,2)
+    plt.title("Test Acc")
+    plt.plot(logs_df["epoch"], logs_df["test_acc"])
+
+    plt.savefig("progress.png")
+    plt.close()
 
     if epoch % 10 == 0:
         checkpoint = {
