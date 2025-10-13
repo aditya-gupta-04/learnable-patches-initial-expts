@@ -238,6 +238,10 @@ def test(epoch, logs):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             loss = criterion(outputs, F.one_hot(targets, num_classes=args.num_classes).float())
+            if args.learn_patch_boundaries and args.ratio_loss_N != 0:
+                loss += args.ratio_loss_alpha * model.patch_embed.ratio_loss_cache
+                # Clear to avoid keeping references to the whole graph
+                model.patch_embed.ratio_loss_cache = None
 
             test_loss += loss.item()
             _, predicted = outputs.max(1)

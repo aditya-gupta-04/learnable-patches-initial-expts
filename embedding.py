@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import cv2
 import numpy as np
 import os
+from timm.models.vision_transformer import Block
 
 class RoutingModule(nn.Module):
 
@@ -115,6 +116,8 @@ class Embeddings(nn.Module):
 
         self.embed_dim = embed_dim
         self.patch_embeddings = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=3, embed_dim=embed_dim)
+        self.position_embeddings = nn.Parameter(torch.randn(1, self.patch_embeddings.num_patches, embed_dim))
+        # self.enc = Block(dim=embed_dim, num_heads=8, mlp_ratio=4.0, qkv_bias=True)
 
         self.routing_module = RoutingModule(embed_dim=embed_dim)
         self.chunk_layer = ChunkLayer()
@@ -123,9 +126,6 @@ class Embeddings(nn.Module):
         self.downsampling_factor = ratio_loss_N
 
         self.cls_token = nn.Parameter(torch.randn(1, 1, embed_dim))
-        # Create position embeddings for the [CLS] token and the patch embeddings
-        # Add 1 to the sequence length for the [CLS] token
-        self.position_embeddings = nn.Parameter(torch.randn(1, self.patch_embeddings.num_patches, embed_dim))
 
     def _packed_to_batches(self, x, cu_seqlens, max_len, pad_value=0.0):
         B = cu_seqlens.numel() - 1
@@ -144,6 +144,8 @@ class Embeddings(nn.Module):
         with torch.no_grad():
             imgs = x.clone()
             x = self.patch_embeddings(x)
+            x = x + self.position_embeddings
+            # x = self.enc(x)
 
             batch_size, _, _ = x.size()
             
@@ -151,9 +153,6 @@ class Embeddings(nn.Module):
             cu_seqlens = torch.cat([torch.tensor([0]), torch.cumsum(lengths, dim=0)])
 
             x = x.reshape(-1, self.embed_dim)
-
-            # Pass through some encoder
-            # x = self.enc(x)
 
             # Predicting boundaries
             boundary_prob, boundary_mask, selected_probs = self.routing_module(x, cu_seqlens)
@@ -175,6 +174,7 @@ class Embeddings(nn.Module):
     def forward(self, x):
         x = self.patch_embeddings(x)
         x = x + self.position_embeddings
+        # x = self.enc(x)
 
         batch_size, _, _ = x.size()
         
@@ -182,9 +182,6 @@ class Embeddings(nn.Module):
         cu_seqlens = torch.cat([torch.tensor([0]), torch.cumsum(lengths, dim=0)])
 
         x = x.reshape(-1, self.embed_dim)
-
-        # Pass through some encoder
-        # x = self.enc(x)
 
         # Predicting boundaries
         boundary_prob, boundary_mask, selected_probs = self.routing_module(x, cu_seqlens)
