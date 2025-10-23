@@ -83,7 +83,7 @@ parser.add_argument(
 parser.add_argument("--learn_patch_boundaries", action="store_true")
 parser.add_argument("--ratio_loss_alpha", default=0.03, type=float, help="Loss scaling for ratio loss")
 parser.add_argument("--ratio_loss_N", default=0, type=float, help="Ratio Loss N")
-
+parser.add_argument("--encoder_depth", default=1, type=float, help="Number of transformer blocks prior to chunking")
 
 args = parser.parse_args()
 args.image_size = eval(args.image_size)
@@ -338,7 +338,7 @@ for epoch in range(args.epochs):
     plt.title("Test Acc")
     plt.plot(logs_df["epoch"], logs_df["test_acc"])
 
-    plt.savefig("progress.png")
+    plt.savefig(f"./expt_logs/{args.expt_name}/progress.png")
     plt.close()
 
     if epoch % 10 == 0:

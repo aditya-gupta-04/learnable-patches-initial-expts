@@ -1,6 +1,7 @@
 from utils import log_model_source, save_macs_params_count
 
 import torch
+import timm
 from timm.models.vision_transformer import VisionTransformer
 from embedding import Embeddings
 
@@ -22,9 +23,14 @@ def build_model(args):
             drop_path_rate=(0.1 if args.deit_scheme else 0.0),       
         )
 
+    if args.model == "vit-b" and args.learn_patch_boundaries:
+        model = timm.create_model('vit_base_patch16_224', pretrained=True)  
+        for p in model.parameters():
+            p.requires_grad = False      
+
     if args.learn_patch_boundaries:
         # Swapping the default patch embedding with our custom one
-        model.patch_embed = Embeddings(img_size=args.image_size, patch_size=args.patch_size, embed_dim=args.embed_dim, ratio_loss_N=args.ratio_loss_N)
+        model.patch_embed = Embeddings(img_size=args.image_size, patch_size=args.patch_size, embed_dim=model.embed_dim, encoder_depth = args.encoder_depth, ratio_loss_N=args.ratio_loss_N)
         model.pos_embed = None # Disables the positional embeddings in the timm model
 
         print("Initialized model with learnable patch boundaries, swapped original patch_embed and disabled original pos_embed")

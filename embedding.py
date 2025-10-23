@@ -111,13 +111,19 @@ class ChunkLayer(nn.Module):
 
 class Embeddings(nn.Module):
 
-    def __init__(self, img_size, patch_size, embed_dim, ratio_loss_N):
+    def __init__(self, img_size, patch_size, embed_dim, encoder_depth, ratio_loss_N):
         super().__init__()
 
         self.embed_dim = embed_dim
         self.patch_embeddings = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=3, embed_dim=embed_dim)
         self.position_embeddings = nn.Parameter(torch.randn(1, self.patch_embeddings.num_patches, embed_dim))
-        # self.enc = Block(dim=embed_dim, num_heads=8, mlp_ratio=4.0, qkv_bias=True)
+        if encoder_depth != 0:
+            self.enc = nn.ModuleList([
+                Block(dim=embed_dim, num_heads=8, mlp_ratio=4.0, qkv_bias=True)
+                for _ in range(encoder_depth)
+            ])
+        else:
+            self.enc = None
 
         self.routing_module = RoutingModule(embed_dim=embed_dim)
         self.chunk_layer = ChunkLayer()
@@ -145,7 +151,8 @@ class Embeddings(nn.Module):
             imgs = x.clone()
             x = self.patch_embeddings(x)
             x = x + self.position_embeddings
-            # x = self.enc(x)
+            if self.enc is not None:
+                x = self.enc(x)
 
             batch_size, _, _ = x.size()
             
@@ -174,7 +181,8 @@ class Embeddings(nn.Module):
     def forward(self, x):
         x = self.patch_embeddings(x)
         x = x + self.position_embeddings
-        # x = self.enc(x)
+        if self.enc is not None:
+            x = self.enc(x)
 
         batch_size, _, _ = x.size()
         
